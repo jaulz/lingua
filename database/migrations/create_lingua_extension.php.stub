@@ -1,0 +1,474 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Support\Facades\DB;
+use Tpetry\PostgresqlEnhanced\Schema\Blueprint;
+use Tpetry\PostgresqlEnhanced\Support\Facades\Schema;
+use Jaulz\Lingua\Facades\Lingua;
+
+return new class extends Migration {
+  /**
+   * Run the migrations.
+   *
+   * @return void
+   */
+  public function up()
+  {
+    DB::transaction(function () {
+      DB::statement('CREATE SCHEMA IF NOT EXISTS ' . Lingua::getSchema());
+
+      // Create artifacts 
+      $this->createTypes();
+      $this->createUtilityFunctions();
+      $this->createFunctions();
+      $this->createTables();
+      $this->seedTables();
+      $this->createTriggerFunctions();
+      $this->createTriggers();
+    });
+  }
+
+  /**
+   * Reverse the migrations.
+   *
+   * @return void
+   */
+  public function down()
+  {
+    DB::statement('DROP SCHEMA IF EXISTS ' . Lingua::getSchema() . ' CASCADE;');
+  }
+
+  /**
+   * Create types.
+   *
+   * @return void
+   */
+  public function createTypes() {
+
+  }
+
+  /**
+   * Create utility functions.
+   *
+   * @return void
+   */
+  public function createUtilityFunctions() {
+    Schema::createFunctionOrReplace(
+      name: Lingua::getSchema() . '.get_record_value',
+      parameters: [
+        'p_element' => 'anyelement',
+        'p_key' => 'text',
+      ],
+      return: 'text',
+      body: sprintf(
+        <<<PLPGSQL
+          BEGIN
+            RETURN row_to_json(p_element) ->> p_key;
+          END;
+        PLPGSQL
+      ),
+      language: 'PLPGSQL'
+    );
+
+    Schema::createFunctionOrReplace(
+      name: Lingua::getSchema() . '.jsonb_array_to_text_array',
+      parameters: [
+        'p_array' => 'jsonb',
+      ],
+      return: 'text[]',
+      body: sprintf(
+        <<<SQL
+          SELECT array(SELECT jsonb_array_elements_text(p_array))
+        SQL
+      ),
+      language: 'SQL',
+      options: [
+        'volatility' => 'immutable',
+        'parallel' => 'safe'
+      ]
+    );
+  }
+
+  /**
+   * Create functions.
+   *
+   * @return void
+   */
+  public function createFunctions() {      
+    Schema::createFunctionOrReplace(
+      name: Lingua::getSchema() . '.create',
+      parameters: [
+        'p_table_schema' => 'text',
+        'p_table_name' => 'text',
+        'p_target_name' => 'text',
+        'p_source_names' => 'text[]',
+      ],
+      return: 'void',
+      body: sprintf(
+        <<<PLPGSQL
+          BEGIN
+            INSERT INTO %1\$s.definitions 
+                (table_schema, table_name, target_name, source_names) 
+              VALUES 
+                (p_table_schema, p_table_name, p_target_name, p_source_names);
+          END;
+        PLPGSQL
+        ,
+        Lingua::getSchema()
+      ),
+      language: 'PLPGSQL'
+    );
+
+    Schema::createFunctionOrReplace(
+      name: Lingua::getSchema() . '.determine_search_config',
+      parameters: [
+        'p_input' => 'text',
+      ],
+      return: 'regconfig',
+      body: sprintf(
+        <<<PLPGSQL
+          DECLARE
+            search_config regconfig;
+          BEGIN
+              WITH search_configs as ( 
+                SELECT 
+                    cfgname, 
+                    to_tsvector(cfgname::regconfig, title) as vector, 
+                    length(to_tsvector(cfgname::regconfig, title)) as length
+                  FROM 
+                    pg_ts_config, 
+                    (select p_input as title) as input
+              )
+              SELECT 
+                cfgname::regconfig
+              INTO search_config 
+              FROM search_configs
+              WHERE length=(SELECT MIN(length) FROM search_configs)
+              ORDER BY 
+                cfgname='simple' DESC, 
+                cfgname ASC
+              LIMIT 1;
+
+              RETURN search_config;
+          END;
+        PLPGSQL
+        ,
+        Lingua::getSchema()
+      ),
+      language: 'PLPGSQL'
+    );
+  }
+
+  /**
+   * Create tables.
+   *
+   * @return void
+   */
+  public function createTables() { 
+    Schema::create(Lingua::getSchema() . '.definitions', function (
+      Blueprint $table
+    ) {
+      $table->id()->generatedAs();
+
+      $table->text('table_schema');
+      $table->text('table_name');
+      $table->text('target_name');
+
+      $table->unique(['table_schema', 'table_name', 'target_name']);
+    });
+
+    DB::statement(
+      sprintf(<<<SQL
+          ALTER TABLE %1\$s.definitions
+            ADD COLUMN source_names text[];
+        SQL, 
+        Lingua::getSchema()
+      )
+    );
+
+    Schema::create(Lingua::getSchema() . '.languages', function (Blueprint $table) {
+      $table->char('code', 2)->unique();
+    });
+
+    DB::statement(
+      sprintf(<<<SQL
+          ALTER TABLE %1\$s.languages
+            ADD COLUMN search_config regconfig;
+        SQL, 
+        Lingua::getSchema()
+      )
+    );
+  }
+
+  /**
+   * Seed tables.
+   *
+   * @return void
+   */
+  public function seedTables() {
+    $mappings = [
+      "arabic" => ["ar"],
+      "arabic" => ["hy"],
+      "basque" => ["eu"],
+      "catalan" => ["ca"],
+      "danish" => ["da"],
+      "dutch" => ["nl"],
+      "english" => ["en"],
+      "finnish" => ["fi"],
+      "french" => ["fr"],
+      "german" => ["de"],
+      "greek" => ["el"],
+      "hindi" => ["hi"],
+      "hungarian" => ["hu"],
+      "indonesian" => ["id"],
+      "irish" => ["ga"],
+      "italian" => ["it"],
+      "lithuanian" => ["lt"],
+      "nepali" => ["ne"],
+      "norwegian" => ["no"],
+      "portuguese" => ["pt"],
+      "romanian" => ["ro"],
+      "russian" => ["ru"],
+      "serbian" => ["sr"],
+      "spanish" => ["es"],
+      "swedish" => ["sv"],
+      "tamil" => ["ta"],
+      "turkish" => ["tr"],
+      "yiddish" => ["yi"],
+    ];
+
+    foreach ($mappings as $searchConfig => $languageCodes) {
+      foreach ($languageCodes as $languageCode) {
+        DB::table(Lingua::getSchema() . '.languages')->insert([
+          'code' => $languageCode,
+          'search_config' => $searchConfig,
+        ]);
+      }
+    };
+  }
+
+  /**
+   * Create trigger functions.
+   *
+   * @return void
+   */
+  public function createTriggerFunctions() {
+    Schema::createFunctionOrReplace(
+      name: Lingua::getSchema() . '.definitions__before',
+      parameters: [],
+      return: 'trigger',
+      body: sprintf(
+        <<<PLPGSQL
+          BEGIN
+            -- Prevent updates
+            IF TG_OP = 'UPDATE' THEN
+              NEW.table_schema = OLD.table_schema;
+              NEW.table_name = OLD.table_name;
+              NEW.target_name = OLD.target_name;
+              NEW.source_names = OLD.source_names;
+            END IF;
+
+            RETURN NEW;
+          END;
+        PLPGSQL
+        ,
+        Lingua::getSchema()
+      ),
+      language: 'PLPGSQL'
+    );
+
+    Schema::createFunctionOrReplace(
+      name: Lingua::getSchema() . '.definitions__after',
+      parameters: [],
+      return: 'trigger',
+      body: sprintf(
+        <<<PLPGSQL
+          DECLARE
+            trigger_name text;
+            index_name text;
+            index_column_names text;
+            id int;
+          BEGIN
+            -- Log
+            RAISE DEBUG '
+              %1\$s.definition__after: start (
+                TG_NAME=%%, 
+                TG_OP=%%, 
+                TG_TABLE_NAME=%%, 
+                OLD=%%, 
+                NEW=%%, 
+                TG_ARGV=%%
+              )', 
+              TG_NAME, 
+              TG_OP, 
+              TG_TABLE_NAME, 
+              OLD::text, 
+              NEW::text, 
+              TG_ARGV::text;
+
+            -- Determine names
+            id = CASE WHEN TG_OP = 'DELETE' THEN OLD.id ELSE NEW.id END;
+            trigger_name = format('50_lingua_%%s__before', id);
+            index_name = format('%%s_lingua', NEW.table_name, id);
+
+            IF TG_OP = 'DELETE' THEN
+              RETURN OLD;
+            END IF;
+
+            IF TG_OP = 'INSERT' THEN
+              -- Create column
+              EXECUTE format(
+                'ALTER TABLE %%I.%%I ADD COLUMN IF NOT EXISTS %%I char(2)', 
+                NEW.table_schema,
+                NEW.table_name,
+                NEW.target_name
+              );
+
+              -- Create trigger
+              EXECUTE format('DROP TRIGGER IF EXISTS %%I ON %%I.%%I', trigger_name, NEW.table_schema, NEW.table_name);
+              EXECUTE format('
+                CREATE TRIGGER %%I
+                  BEFORE INSERT OR UPDATE OR DELETE
+                  ON %%I.%%I
+                  FOR EACH ROW 
+                  EXECUTE FUNCTION %1\$s.lingua__before()
+                ', trigger_name, NEW.table_schema, NEW.table_name);
+            END IF;
+
+            -- Create indexes
+            IF TG_OP = 'INSERT' THEN
+              EXECUTE format('
+                CREATE INDEX IF NOT EXISTS %%I
+                  ON %%I.%%I (%%I)
+                ', index_name, NEW.table_schema, NEW.table_name, NEW.target_name);
+            END IF;  
+
+            RETURN NEW;
+          END;
+        PLPGSQL
+        ,
+        Lingua::getSchema()
+      ),
+      language: 'PLPGSQL'
+    );
+
+    Schema::createFunctionOrReplace(
+      name: Lingua::getSchema() . '.lingua__before',
+      parameters: [],
+      return: 'trigger',
+      body: sprintf(
+        <<<PLPGSQL
+          DECLARE
+            definition %1\$s.definitions%%rowtype;
+
+            source_name text;
+            search_config regconfig DEFAULT 'simple'::regconfig;
+            source_value text DEFAULT '';
+            language_value text;
+          BEGIN
+            -- Log
+            RAISE DEBUG '
+              %1\$s.lingua__before: start (
+                TG_NAME=%%, 
+                TG_OP=%%, 
+                TG_TABLE_SCHEMA=%%, 
+                TG_TABLE_NAME=%%, 
+                OLD=%%, 
+                NEW=%%, 
+                TG_ARGV=%%
+              )', 
+              TG_NAME, 
+              TG_OP, 
+              TG_TABLE_SCHEMA,
+              TG_TABLE_NAME, 
+              OLD::text, 
+              NEW::text, 
+              TG_ARGV::text;
+
+            -- Do nothing
+            IF TG_OP = 'DELETE' THEN
+              RETURN OLD;
+            END IF;
+
+            -- Go through all definitions and determine language
+            FOR definition IN 
+              SELECT * FROM %1\$s.definitions 
+                WHERE
+                    table_schema = TG_TABLE_SCHEMA
+                  AND
+                    table_name = TG_TABLE_NAME
+            LOOP
+              FOREACH source_name IN ARRAY definition.source_names
+              LOOP
+                source_value = source_value || ' ' || %1\$s.get_record_value(NEW, source_name);
+              END LOOP;
+
+              -- Get search config
+              search_config = %1\$s.determine_search_config(source_value);
+
+              -- Get code from language table
+              IF search_config IS NOT NULL THEN
+                EXECUTE format(
+                  '
+                    SELECT 
+                        code 
+                      FROM %1\$s.languages
+                      WHERE 
+                        search_config = %%L::regconfig
+                  ',
+                  search_config
+                ) 
+                INTO language_value;
+              ELSE
+                language_value = NULL;
+              END IF;
+
+              -- Update language in record
+              IF language_value IS NOT NULL THEN
+                NEW := NEW #= hstore(definition.target_name, language_value);
+              END IF;
+            END LOOP;
+
+            RETURN NEW;
+          END;
+        PLPGSQL
+        ,
+        Lingua::getSchema()
+      ),
+      language: 'PLPGSQL'
+    );
+  }
+
+  /**
+   * Create triggers.
+   *
+   * @return void
+   */
+  public function createTriggers() {
+    DB::statement(
+      sprintf(
+        <<<PLPGSQL
+          CREATE OR REPLACE TRIGGER "100_prepare_before"
+            BEFORE INSERT OR UPDATE OR DELETE ON %1\$s.definitions
+            FOR EACH ROW 
+            EXECUTE FUNCTION %1\$s.definitions__before();
+        PLPGSQL
+        ,
+        Lingua::getSchema()
+      )
+    );
+
+    DB::statement(
+      sprintf(
+        <<<PLPGSQL
+          CREATE OR REPLACE TRIGGER "100_create_artifacts_after"
+            AFTER INSERT OR UPDATE OR DELETE ON %1\$s.definitions
+            FOR EACH ROW 
+            EXECUTE FUNCTION %1\$s.definitions__after();
+        PLPGSQL
+        ,
+        Lingua::getSchema()
+      )
+    );
+  }
+};
