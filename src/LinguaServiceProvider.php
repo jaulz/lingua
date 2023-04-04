@@ -43,7 +43,7 @@ class LinguaServiceProvider extends PackageServiceProvider
     public function extendBlueprint()
     {
       Blueprint::macro('lingua', function (
-        array $sourceName,
+        array|string $sourceName,
         string $targetName = 'language_code',
         array $options = [],
       ) {
@@ -51,6 +51,7 @@ class LinguaServiceProvider extends PackageServiceProvider
         $prefix = $this->prefix;
         $tableName = $this->table;
         $schema = config('lingua.schema') ?? 'public';
+        $sourceName = is_array($sourceName) ? $sourceName : [$sourceName];
   
         $command = $this->addCommand(
           'lingua',
