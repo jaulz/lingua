@@ -29,7 +29,6 @@ class LinguaServiceProvider extends PackageServiceProvider
         $package
             ->name('lingua')
             ->hasConfigFile('lingua')
-            ->publishesServiceProvider('LinguaServiceProvider')
             ->hasMigration('create_lingua_extension')
             ->hasMigration('grant_usage_on_lingua_extension')
             ->hasInstallCommand(function(InstallCommand $command) {
