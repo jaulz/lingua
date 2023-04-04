@@ -36,7 +36,6 @@ class LinguaServiceProvider extends PackageServiceProvider
                     ->publishMigrations()
                     ->publishConfigFile()
                     ->askToRunMigrations()
-                    ->copyAndRegisterServiceProviderInApp()
                     ->askToStarRepoOnGitHub('jaulz/lingua');
             });
     }
