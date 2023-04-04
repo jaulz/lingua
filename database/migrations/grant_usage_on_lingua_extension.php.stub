@@ -11,7 +11,7 @@ return new class extends Migration {
    */
   public function up()
   {
-    Lingua::grant('app');
+    Lingua::grant(Lingua::getSchema());
   }
 
   /**
@@ -21,6 +21,6 @@ return new class extends Migration {
    */
   public function down()
   {
-    Lingua::ungrant('app');
+    Lingua::ungrant(Lingua::getSchema());
   }
 };
